@@ -15,17 +15,17 @@ export async function POST(request: Request) {
   }
 
   // ── Parse body ──
-  let body: { invite_code?: string };
+  let body: { inviteCode?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { invite_code } = body;
-  if (!invite_code || typeof invite_code !== "string") {
+  const { inviteCode } = body;
+  if (!inviteCode || typeof inviteCode !== "string") {
     return NextResponse.json(
-      { error: "invite_code is required" },
+      { error: "inviteCode is required" },
       { status: 400 },
     );
   }
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   const { data: group, error: groupError } = await supabase
     .from("groups")
     .select("id, max_members")
-    .eq("invite_code", invite_code.trim())
+    .eq("invite_code", inviteCode.trim())
     .single();
 
   if (groupError || !group) {
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   // ── Check if already a member ──
   const { data: existing } = await supabase
     .from("group_members")
-    .select("id")
+    .select("group_id")
     .eq("group_id", group.id)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -76,8 +76,8 @@ export async function POST(request: Request) {
 
   if (count !== null && count >= maxMembers) {
     return NextResponse.json(
-      { error: `Group is full (max ${maxMembers} members)` },
-      { status: 403 },
+      { error: "Group is full (Max 3 members)" },
+      { status: 400 },
     );
   }
 
@@ -85,7 +85,6 @@ export async function POST(request: Request) {
   const { error: insertError } = await supabase.from("group_members").insert({
     group_id: group.id,
     user_id: user.id,
-    role: "member",
   });
 
   if (insertError) {
