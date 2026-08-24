@@ -1,9 +1,19 @@
 "use client";
 
-import type { MockStats } from "@/lib/mockData";
+interface PlatformBreakdown {
+  label: string;
+  count: number;
+  colour: string;
+}
 
 interface StatsWidgetProps {
-  stats: MockStats;
+  stats: {
+    totalActivities: number;
+    activeDaysThisWeek: number;
+    platformsConnected: number;
+    groupRank: number;
+  };
+  platformBreakdown: PlatformBreakdown[];
 }
 
 /** Weekly platform breakdown bars */
@@ -36,7 +46,7 @@ function PlatformBar({
   );
 }
 
-export function StatsWidget({ stats }: StatsWidgetProps) {
+export function StatsWidget({ stats, platformBreakdown }: StatsWidgetProps) {
   const summaryCards = [
     {
       label: "Total Activities",
@@ -59,6 +69,8 @@ export function StatsWidget({ stats }: StatsWidgetProps) {
       accent: "text-yellow-400",
     },
   ];
+
+  const maxCount = Math.max(...platformBreakdown.map((p) => p.count), 1);
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
@@ -87,30 +99,21 @@ export function StatsWidget({ stats }: StatsWidgetProps) {
           This Week by Platform
         </h3>
         <div className="space-y-3">
-          <PlatformBar
-            label="GitHub"
-            count={14}
-            max={20}
-            colour="bg-zinc-400"
-          />
-          <PlatformBar
-            label="Hack The Box"
-            count={7}
-            max={20}
-            colour="bg-purple-400"
-          />
-          <PlatformBar
-            label="TryHackMe"
-            count={3}
-            max={20}
-            colour="bg-red-400"
-          />
-          <PlatformBar
-            label="PicoCTF"
-            count={0}
-            max={20}
-            colour="bg-yellow-400"
-          />
+          {platformBreakdown.length === 0 ? (
+            <p className="text-xs text-zinc-600">
+              No platform activity yet.
+            </p>
+          ) : (
+            platformBreakdown.map((p) => (
+              <PlatformBar
+                key={p.label}
+                label={p.label}
+                count={p.count}
+                max={maxCount}
+                colour={p.colour}
+              />
+            ))
+          )}
         </div>
       </div>
     </div>

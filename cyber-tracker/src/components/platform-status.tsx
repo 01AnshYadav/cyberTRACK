@@ -1,7 +1,6 @@
 interface ConnectedAccount {
   id: string;
   platform: string;
-  connected_at: string;
 }
 
 const knownPlatforms = [

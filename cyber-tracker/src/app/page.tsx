@@ -9,10 +9,10 @@ export default function Home() {
           Private cybersecurity activity tracking for small teams.
         </p>
         <a
-          href="/dashboard"
+          href="/login"
           className="inline-block mt-4 rounded-lg bg-emerald-500 px-6 py-3 text-sm font-semibold text-black transition-colors hover:bg-emerald-400"
         >
-          Open Dashboard
+          Sign In
         </a>
       </div>
     </main>
