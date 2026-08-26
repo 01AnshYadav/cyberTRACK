@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { fetchGitHubEvents, parseGitHubEvents } from "@/lib/integrations/github";
-import { upsertActivities } from "@/lib/integrations/ingest";
 
 // POST /api/sync/github
-// Authenticated endpoint that fetches the user's recent public
-// GitHub events and upserts them into the activities table.
+// Fetches GitHub events and inserts each one individually.
+// Duplicate-key errors (23505) are silently skipped.
 export async function POST() {
   const supabase = await createClient();
 
-  // ── Auth check ───────────────────────────────────────────
   const {
     data: { user },
     error: authError,
@@ -19,10 +17,9 @@ export async function POST() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // ── Look up linked GitHub account ────────────────────────
   const { data: account, error: acctError } = await supabase
     .from("connected_accounts")
-    .select("platform_username, access_token")
+    .select("platform_username")
     .eq("user_id", user.id)
     .eq("platform", "github")
     .maybeSingle();
@@ -41,39 +38,41 @@ export async function POST() {
     );
   }
 
-  // ── Fetch events from GitHub ─────────────────────────────
   let events;
   try {
-    events = await fetchGitHubEvents(
-      account.platform_username,
-      account.access_token,
-    );
+    events = await fetchGitHubEvents(account.platform_username);
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Unknown GitHub API error";
-    console.error("[sync/github]", message);
     return NextResponse.json(
       { error: `Failed to fetch GitHub events: ${message}` },
       { status: 502 },
     );
   }
 
-  // ── Normalise into Activity rows ─────────────────────────
   const rows = parseGitHubEvents(events, user.id);
 
-  // ── Upsert (deduplicate on platform + external_id) ──────
-  const result = await upsertActivities(supabase, rows);
+  // Deduplicate by external_id (GitHub API can repeat events)
+  const seen = new Set<string>();
+  const unique = rows.filter((r) => {
+    if (seen.has(r.external_id)) return false;
+    seen.add(r.external_id);
+    return true;
+  });
 
-  if (result.error) {
-    return NextResponse.json(
-      { error: `Ingestion failed: ${result.error}` },
-      { status: 500 },
-    );
+  let inserted = 0;
+  for (const row of unique) {
+    const { error } = await supabase.from("activities").insert(row);
+    if (!error) {
+      inserted++;
+    }
+    // 23505 = duplicate key → already exists, skip silently
   }
 
   return NextResponse.json({
     success: true,
-    synced: result.inserted,
+    synced: inserted,
+    skipped: unique.length - inserted,
     username: account.platform_username,
   });
 }

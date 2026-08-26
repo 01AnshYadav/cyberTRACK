@@ -30,6 +30,7 @@ export interface ConnectedAccount {
   platform: string;
   platform_username: string | null;
   access_token: string | null;
+  external_id: string | null;
 }
 
 export interface Activity {

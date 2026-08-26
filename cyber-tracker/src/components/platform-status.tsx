@@ -21,9 +21,17 @@ export function PlatformStatus({
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-      <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-4">
-        Connected Platforms
-      </h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
+          Connected Platforms
+        </h2>
+        <a
+          href="/connections"
+          className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors font-medium"
+        >
+          Manage
+        </a>
+      </div>
       <ul className="space-y-2">
         {knownPlatforms.map((p) => {
           const isConnected = connectedPlatforms.has(p.slug);
@@ -38,13 +46,23 @@ export function PlatformStatus({
                 </span>
                 <span className="text-sm text-zinc-300">{p.label}</span>
               </div>
-              <span
-                className={`text-xs font-medium ${
-                  isConnected ? "text-emerald-400" : "text-zinc-600"
-                }`}
-              >
-                {isConnected ? "Connected" : "Not connected"}
-              </span>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-xs font-medium ${
+                    isConnected ? "text-emerald-400" : "text-zinc-600"
+                  }`}
+                >
+                  {isConnected ? "Connected" : "Not connected"}
+                </span>
+                {!isConnected && p.slug === "github" && (
+                  <a
+                    href="/connections"
+                    className="rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold text-black hover:bg-emerald-500 transition-colors"
+                  >
+                    Connect
+                  </a>
+                )}
+              </div>
             </li>
           );
         })}

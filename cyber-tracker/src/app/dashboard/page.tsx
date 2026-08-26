@@ -184,9 +184,11 @@ export default async function DashboardPage() {
     }
   }
 
-  // ── Fetch recent activities for the user's groups ──────
+  // ── Fetch recent activities ──────────────────────────────
+  //    If the user belongs to groups, show group members' activities.
+  //    Otherwise, show the user's own activities.
   let activities: Activity[] = [];
-  if (groupIds.length > 0) {
+  if (groupIds.length > 0 && members.length > 0) {
     const { data: groupActivities } = await supabase
       .from("activities")
       .select("*")
@@ -195,6 +197,15 @@ export default async function DashboardPage() {
       .limit(20);
 
     activities = groupActivities ?? [];
+  } else {
+    const { data: ownActivities } = await supabase
+      .from("activities")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("performed_at", { ascending: false })
+      .limit(20);
+
+    activities = ownActivities ?? [];
   }
 
   // ── Build user map for ActivityFeed ────────────────────
@@ -203,6 +214,13 @@ export default async function DashboardPage() {
     userMap[m.user.id] = {
       username: m.user.username,
       avatar_url: m.user.avatar_url,
+    };
+  }
+  // Always include the current user (needed when user has no groups)
+  if (!userMap[user.id]) {
+    userMap[user.id] = {
+      username: profile.username,
+      avatar_url: profile.avatar_url,
     };
   }
 
