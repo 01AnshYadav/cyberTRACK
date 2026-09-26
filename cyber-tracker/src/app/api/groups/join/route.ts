@@ -62,7 +62,7 @@ export async function POST(request: Request) {
   // ── Enforce member capacity ──
   const { count, error: countError } = await supabase
     .from("group_members")
-    .select("id", { count: "exact", head: true })
+    .select("group_id", { count: "exact", head: true })
     .eq("group_id", group.id);
 
   if (countError) {

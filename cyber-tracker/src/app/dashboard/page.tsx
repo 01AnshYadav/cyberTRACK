@@ -1,19 +1,15 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { Leaderboard } from "@/components/Leaderboard";
 import { StatsWidget } from "@/components/StatsWidget";
 import { InviteModal } from "@/components/InviteModal";
 import { PlatformStatus } from "@/components/platform-status";
+import { ComparativeBreakdown } from "@/components/ComparativeBreakdown";
+import { PodManagementModal } from "@/components/PodManagementModal";
+import { calculateStreak, classifyFocus } from "@/lib/streak";
 import type { Activity, Profile } from "@/types/database";
-
-// ── Types for computed leaderboard data ─────────────────
-interface LeaderboardMember {
-  user: Profile;
-  rank: number;
-  dailyCount: number;
-  weeklyByPlatform: Record<string, number>;
-}
 
 /** Compute weekly platform breakdown from activities */
 function computePlatformBreakdown(
@@ -34,7 +30,7 @@ function computePlatformBreakdown(
     github: { label: "GitHub", colour: "bg-zinc-400" },
     hackthebox: { label: "Hack The Box", colour: "bg-purple-400" },
     tryhackme: { label: "TryHackMe", colour: "bg-red-400" },
-    picoctf: { label: "PicoCTF", colour: "bg-yellow-400" },
+    picoctf: { label: "PicoCTF", colour: "bg-amber-400" },
   };
 
   return Object.entries(counts)
@@ -62,45 +58,110 @@ function countActiveDays(activities: Activity[]): number {
   return days.size;
 }
 
+/** Compute ranked members with dynamic streaks and weekly breakdown */
+function computeRankedMembers(
+  memberProfiles: Profile[],
+  allActivities: Activity[],
+) {
+  const now = Date.now();
+  const oneDayAgo = now - 24 * 60 * 60 * 1000;
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+  const leaderboardMembers = memberProfiles.map((p, idx) => {
+    const userActivities = allActivities.filter((a) => a.user_id === p.id);
+    const dailyCount = userActivities.filter(
+      (a) => new Date(a.performed_at).getTime() >= oneDayAgo,
+    ).length;
+
+    const streak = calculateStreak(userActivities);
+    const effectiveStreak = Math.max(p.streak_count, streak.currentStreak);
+
+    const weeklyByPlatform: Record<string, number> = {};
+    for (const a of userActivities) {
+      if (new Date(a.performed_at).getTime() >= sevenDaysAgo) {
+        weeklyByPlatform[a.platform] = (weeklyByPlatform[a.platform] ?? 0) + 1;
+      }
+    }
+
+    return {
+      user: p,
+      rank: idx + 1,
+      dailyCount,
+      weeklyByPlatform,
+      effectiveStreak,
+    };
+  });
+
+  leaderboardMembers.sort(
+    (a, b) => (b.effectiveStreak ?? 0) - (a.effectiveStreak ?? 0),
+  );
+  return leaderboardMembers.map((m, idx) => ({
+    ...m,
+    rank: idx + 1,
+  }));
+}
+
+/** Compute comparative focus breakdown for all cohort members */
+function computeComparativeData(
+  memberProfiles: Profile[],
+  allActivities: Activity[],
+) {
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+  return memberProfiles.map((p) => {
+    const weeklyActs = allActivities.filter(
+      (a) =>
+        a.user_id === p.id &&
+        new Date(a.performed_at).getTime() >= sevenDaysAgo,
+    );
+    const focus = classifyFocus(weeklyActs);
+    return {
+      user: p,
+      codingCount: focus.codingCount,
+      labsCount: focus.labsCount,
+      ctfCount: focus.ctfCount,
+      totalWeekly: weeklyActs.length,
+      dominantFocus: focus.primaryFocus,
+    };
+  });
+}
+
 export default async function DashboardPage() {
   const supabase = await createClient();
 
   // ── Auth check ─────────────────────────────────────────
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
   if (authError || !user) {
     redirect("/login");
   }
 
   // ── Fetch profile ──────────────────────────────────────
-  const { data: profile, error: profileError } = await supabase
+  let { data: profile } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", user.id)
-    .single();
+    .maybeSingle();
 
-  if (profileError || !profile) {
-    // Profile doesn't exist yet — show a setup prompt
-    return (
-      <div className="flex-1 p-4 sm:p-6 lg:p-8">
-        <div className="mx-auto max-w-7xl">
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-8 text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-emerald-400">
-              Welcome to Cyber Tracker
-            </h1>
-            <p className="mt-3 text-zinc-400">
-              Your account is set up, but your profile hasn&apos;t been created yet.
-              Please contact your team admin to join a group.
-            </p>
-            <a
-              href="/"
-              className="mt-6 inline-block rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-emerald-500"
-            >
-              Back to Home
-            </a>
-          </div>
-        </div>
-      </div>
-    );
+  if (!profile) {
+    // Attempt auto-provisioning profile if missing
+    const username = user.email?.split("@")[0] || `user_${user.id.slice(0, 6)}`;
+    const { data: newProf } = await supabase
+      .from("profiles")
+      .upsert({ id: user.id, username, streak_count: 0 })
+      .select()
+      .maybeSingle();
+
+    profile = newProf || {
+      id: user.id,
+      username,
+      avatar_url: null,
+      streak_count: 0,
+      created_at: new Date().toISOString(),
+    };
   }
 
   // ── Fetch groups the user belongs to ───────────────────
@@ -112,23 +173,29 @@ export default async function DashboardPage() {
   const groupIds = (memberships ?? []).map((m) => m.group_id);
 
   // ── Fetch group details ────────────────────────────────
-  let groupName = "Your Group";
+  let groupName = "Solo Pod";
   let inviteCode = "";
+  let maxMembers = 3;
+  let currentMemberCount = 1;
+
   if (groupIds.length > 0) {
     const { data: groups } = await supabase
       .from("groups")
-      .select("name, invite_code")
+      .select("name, invite_code, max_members")
       .in("id", groupIds)
       .limit(1);
 
     if (groups && groups.length > 0) {
       groupName = groups[0].name;
       inviteCode = groups[0].invite_code;
+      maxMembers = groups[0].max_members || 3;
     }
   }
 
-  // ── Fetch group members (for leaderboard) ──────────────
-  let members: LeaderboardMember[] = [];
+  // ── Fetch group members & activities ───────────────────
+  let memberProfiles: Profile[] = [profile];
+  let allActivities: Activity[] = [];
+
   if (groupIds.length > 0) {
     const { data: groupMembers } = await supabase
       .from("group_members")
@@ -136,6 +203,7 @@ export default async function DashboardPage() {
       .in("group_id", groupIds);
 
     const memberIds = [...new Set((groupMembers ?? []).map((m) => m.user_id))];
+    currentMemberCount = memberIds.length || 1;
 
     if (memberIds.length > 0) {
       const { data: profiles } = await supabase
@@ -143,135 +211,137 @@ export default async function DashboardPage() {
         .select("*")
         .in("id", memberIds);
 
-      // Fetch all activities for group members
-      const { data: allActivities } = await supabase
+      if (profiles && profiles.length > 0) {
+        memberProfiles = profiles as Profile[];
+      }
+
+      const { data: acts } = await supabase
         .from("activities")
         .select("*")
         .in("user_id", memberIds)
         .order("performed_at", { ascending: false });
 
-      const activities = allActivities ?? [];
-      const now = Date.now();
-      const oneDayAgo = now - 24 * 60 * 60 * 1000;
-
-      members = (profiles ?? []).map((p, idx) => {
-        const userActivities = activities.filter((a) => a.user_id === p.id);
-        const dailyCount = userActivities.filter(
-          (a) => new Date(a.performed_at).getTime() >= oneDayAgo,
-        ).length;
-
-        // Weekly platform breakdown per user
-        const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
-        const weeklyByPlatform: Record<string, number> = {};
-        for (const a of userActivities) {
-          if (new Date(a.performed_at).getTime() >= sevenDaysAgo) {
-            weeklyByPlatform[a.platform] =
-              (weeklyByPlatform[a.platform] ?? 0) + 1;
-          }
-        }
-
-        return {
-          user: p as Profile,
-          rank: idx + 1,
-          dailyCount,
-          weeklyByPlatform,
-        };
-      });
-
-      // Sort by streak (descending)
-      members.sort((a, b) => b.user.streak_count - a.user.streak_count);
-      members = members.map((m, idx) => ({ ...m, rank: idx + 1 }));
+      allActivities = acts ?? [];
     }
-  }
-
-  // ── Fetch recent activities ──────────────────────────────
-  //    If the user belongs to groups, show group members' activities.
-  //    Otherwise, show the user's own activities.
-  let activities: Activity[] = [];
-  if (groupIds.length > 0 && members.length > 0) {
-    const { data: groupActivities } = await supabase
-      .from("activities")
-      .select("*")
-      .in("user_id", members.map((m) => m.user.id))
-      .order("performed_at", { ascending: false })
-      .limit(20);
-
-    activities = groupActivities ?? [];
   } else {
-    const { data: ownActivities } = await supabase
+    // Fetch solo user's activities
+    const { data: acts } = await supabase
       .from("activities")
       .select("*")
       .eq("user_id", user.id)
-      .order("performed_at", { ascending: false })
-      .limit(20);
+      .order("performed_at", { ascending: false });
 
-    activities = ownActivities ?? [];
+    allActivities = acts ?? [];
   }
+
+  // ── Compute dynamic streak, daily count, and comparative breakdown ──
+  const rankedMembers = computeRankedMembers(memberProfiles, allActivities);
+  const comparativeData = computeComparativeData(memberProfiles, allActivities);
 
   // ── Build user map for ActivityFeed ────────────────────
   const userMap: Record<string, { username: string; avatar_url: string | null }> = {};
-  for (const m of members) {
-    userMap[m.user.id] = {
-      username: m.user.username,
-      avatar_url: m.user.avatar_url,
-    };
-  }
-  // Always include the current user (needed when user has no groups)
-  if (!userMap[user.id]) {
-    userMap[user.id] = {
-      username: profile.username,
-      avatar_url: profile.avatar_url,
-    };
+  for (const p of memberProfiles) {
+    userMap[p.id] = { username: p.username, avatar_url: p.avatar_url };
   }
 
-  // ── Fetch connected accounts ───────────────────────────
+  // ── Fetch connected accounts for current user ──────────
   const { data: connectedAccounts } = await supabase
     .from("connected_accounts")
     .select("id, platform")
     .eq("user_id", user.id);
 
-  // ── Compute stats ──────────────────────────────────────
-  const userActivities = activities.filter((a) => a.user_id === user.id);
-  const totalActivities = userActivities.length;
-  const activeDaysThisWeek = countActiveDays(userActivities);
+  // ── User stats ─────────────────────────────────────────
+  const currentUserActivities = allActivities.filter((a) => a.user_id === user.id);
+  const totalActivities = currentUserActivities.length;
+  const activeDaysThisWeek = countActiveDays(currentUserActivities);
   const platformsConnected = new Set(
     (connectedAccounts ?? []).map((a) => a.platform),
   ).size;
-
-  // Group rank is the user's position in the leaderboard
   const groupRank =
-    members.findIndex((m) => m.user.id === user.id) + 1 || 1;
-
-  const platformBreakdown = computePlatformBreakdown(userActivities);
+    rankedMembers.findIndex((m) => m.user.id === user.id) + 1 || 1;
+  const platformBreakdown = computePlatformBreakdown(currentUserActivities);
 
   return (
-    <div className="flex-1 p-4 sm:p-6 lg:p-8">
-      <div className="mx-auto max-w-7xl">
-        {/* ── Header ───────────────────────────────────────── */}
-        <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex-1 p-4 sm:p-6 lg:p-8 min-h-screen bg-zinc-950 text-zinc-100">
+      <div className="mx-auto max-w-7xl space-y-8">
+        {/* Header */}
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-800/80 pb-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-emerald-400">
-              Dashboard
+            <div className="flex items-center gap-2 mb-1">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+              <span className="font-mono text-[11px] uppercase tracking-widest text-emerald-400 font-bold">
+                Telemetry Active
+              </span>
+            </div>
+            <h1 className="text-2xl font-extrabold tracking-tight text-zinc-100 flex items-center gap-2">
+              <span>⚡</span>
+              <span>Cyber Tracker</span>
             </h1>
-            <p className="mt-1 text-sm text-zinc-500">
+            <p className="mt-1 text-xs text-zinc-400">
               Welcome back,{" "}
-              <span className="text-zinc-300">{profile.username}</span>.
-              Here&apos;s your team&apos;s activity overview.
+              <Link
+                href={`/members/${profile.id}`}
+                className="text-emerald-400 font-semibold hover:underline"
+              >
+                {profile.username}
+              </Link>
+              . Mutual accountability dashboard for cohort{" "}
+              <span className="text-zinc-300 font-semibold">[{groupName}]</span>.
             </p>
           </div>
-          {inviteCode && (
-            <InviteModal inviteCode={inviteCode} groupName={groupName} />
-          )}
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {inviteCode ? (
+              <InviteModal
+                inviteCode={inviteCode}
+                groupName={groupName}
+                memberCount={currentMemberCount}
+                maxMembers={maxMembers}
+              />
+            ) : (
+              <PodManagementModal buttonText="Initialize Pod" />
+            )}
+
+            <Link
+              href="/connections"
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-2 text-xs font-semibold text-zinc-200 transition-all hover:bg-zinc-800 hover:border-emerald-500 hover:text-emerald-400 shadow-sm"
+            >
+              <span>🔌</span>
+              <span>Platforms ({platformsConnected}/4)</span>
+            </Link>
+          </div>
         </header>
 
-        {/* ── Main grid ────────────────────────────────────── */}
+        {/* Onboarding Banner if user has no Pod */}
+        {groupIds.length === 0 && (
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-6 backdrop-blur-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-bold text-emerald-300">
+                  Join or Form Your Accountability Pod
+                </h2>
+                <p className="text-xs text-zinc-400 mt-1 max-w-xl leading-relaxed">
+                  Cyber Tracker relies on small, intimate cohorts (up to 3 members initially) for mutual peer accountability. Create your pod to invite peers, or enter an invite code to join an existing cohort.
+                </p>
+              </div>
+              <div className="shrink-0">
+                <PodManagementModal buttonText="Create or Join Pod" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Comparative Focus Breakdown Matrix */}
+        <ComparativeBreakdown members={comparativeData} />
+
+        {/* Main Grid: Activity feed (7 cols) + Widgets (5 cols) */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          {/* ── Left column: Activity feed (spans 7 cols on lg) ── */}
+          {/* Left: Feed */}
           <div className="lg:col-span-7">
-            <ActivityFeed activities={activities} userMap={userMap} />
+            <ActivityFeed activities={allActivities} userMap={userMap} />
           </div>
 
-          {/* ── Right column: Widgets (spans 5 cols on lg) ────── */}
+          {/* Right: Widgets */}
           <div className="space-y-6 lg:col-span-5">
             <StatsWidget
               stats={{
@@ -282,10 +352,8 @@ export default async function DashboardPage() {
               }}
               platformBreakdown={platformBreakdown}
             />
-            <Leaderboard members={members} />
-            <PlatformStatus
-              connectedAccounts={connectedAccounts ?? []}
-            />
+            <Leaderboard members={rankedMembers} />
+            <PlatformStatus connectedAccounts={connectedAccounts ?? []} />
           </div>
         </div>
       </div>

@@ -12,9 +12,15 @@ export function createClient(
   request: NextRequest,
   refreshedCookies: { name: string; value: string }[],
 ) {
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    "https://placeholder-project.supabase.co";
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
+
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    url,
+    key,
     {
       cookies: {
         getAll() {

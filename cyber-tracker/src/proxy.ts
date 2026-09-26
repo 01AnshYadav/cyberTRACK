@@ -3,19 +3,17 @@ import type { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/proxy";
 
 // ── Routes that require authentication ──────────────────
-const PROTECTED_ROUTES = ["/dashboard", "/group", "/profile", "/connections", "/activity"];
-
-// ── Routes that are always public (never redirect to login) ──
-const PUBLIC_ROUTES = ["/", "/login", "/signup", "/api/dev-login"];
+const PROTECTED_ROUTES = [
+  "/dashboard",
+  "/group",
+  "/profile",
+  "/connections",
+  "/activity",
+  "/members",
+];
 
 function isProtected(pathname: string) {
   return PROTECTED_ROUTES.some(
-    (r) => pathname === r || pathname.startsWith(r + "/"),
-  );
-}
-
-function isPublic(pathname: string) {
-  return PUBLIC_ROUTES.some(
     (r) => pathname === r || pathname.startsWith(r + "/"),
   );
 }
